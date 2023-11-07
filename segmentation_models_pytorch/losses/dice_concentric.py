@@ -108,10 +108,13 @@ class ConcetricDiceLoss(_Loss):
 
         # import numpy as np
         # np.save("/mnt/prj001/Bibhabasu_Mohapatra/github/experiments/dump.npy",self.square_mask.numpy(),)
+        y_pred_org_copy = y_pred_org.clone()
+        y_pred_org_copy.requires_grad = True
         for idx in range(len(self.square_weights)):
             H,W = torch.where(self.square_mask == idx)
-
-            y_pred = y_pred_org[...,H,W]*self.square_weights[idx]
+            
+            y_pred = y_pred_org_copy[...,H,W]*self.square_weights[idx]
+            
             y_true = y_true_org[...,H,W]
 
             if self.mode == BINARY_MODE:
