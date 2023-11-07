@@ -106,8 +106,8 @@ class ConcetricDiceLoss(_Loss):
         intermediate_scores = []
         scores = 0
 
-        import numpy as np
-        np.save("/mnt/prj001/Bibhabasu_Mohapatra/github/experiments/dump.npy",self.square_mask.numpy(),)
+        # import numpy as np
+        # np.save("/mnt/prj001/Bibhabasu_Mohapatra/github/experiments/dump.npy",self.square_mask.numpy(),)
         for idx in range(len(self.square_weights)):
             H,W = torch.where(self.square_mask == idx)
 
