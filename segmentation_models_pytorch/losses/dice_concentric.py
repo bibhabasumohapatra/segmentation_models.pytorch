@@ -20,6 +20,7 @@ class ConcetricDiceLoss(_Loss):
         ignore_index: Optional[int] = None,
         eps: float = 1e-7,
         square_weights: Optional[List[int]] = None,
+        input_shape : Optional[tuple] = None,
     ):
         """Dice loss for image segmentation task.
         It supports binary, multiclass and multilabel cases
@@ -55,13 +56,18 @@ class ConcetricDiceLoss(_Loss):
         self.log_loss = log_loss
         self.ignore_index = ignore_index
         self.square_weights = square_weights
+        H,W = input_shape
+        self.square_mask = self.create_mask((H,W))
+        self.intermediate_score = None
 
     def create_mask(self, shape, multiplier=2):
 
         num_inst = len(self.square_weights)
+
+        square_indexes = range(num_inst)
         H, W = shape[0], shape[1]
         mask = torch.zeros((H, W))
-        mask[0:H,0:W] = self.square_weights[0]
+        mask[0:H,0:W] = square_indexes[0]
         x_0,y_0,x_1,y_1 = 0,0,W,H
 
         values = 12
@@ -72,74 +78,78 @@ class ConcetricDiceLoss(_Loss):
             y_1 -= H//(2*multiplier)
             x_1 -= H//(2*multiplier)
 
-            mask[y_0:y_1,x_0:x_1] = self.square_weights[event+1]
+            mask[y_0:y_1,x_0:x_1] = square_indexes[event+1]
 
             H, W = int(y_1-y_0), int(x_1 - x_0)
             values += 2
 
         return mask
     
-    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
+    def forward(self, y_pred_org: torch.Tensor, y_true_org: torch.Tensor) -> torch.Tensor:
 
-        assert y_true.size(0) == y_pred.size(0)
-
-        H,W = y_pred.shape[-2], y_pred.shape[-1]
-        square_mask = self.create_mask((H,W))
+        assert y_true_org.size(0) == y_pred_org.size(0)
 
         if self.from_logits:
             # Apply activations to get [0..1] class probabilities
             # Using Log-Exp as this gives more numerically stable result and does not cause vanishing gradient on
             # extreme values 0 and 1
             if self.mode == MULTICLASS_MODE:
-                y_pred = y_pred.log_softmax(dim=1).exp()
+                y_pred_org = y_pred_org.log_softmax(dim=1).exp()
             else:
-                y_pred = F.logsigmoid(y_pred).exp()
+                y_pred_org = F.logsigmoid(y_pred_org).exp()
 
-        bs = y_true.size(0)
-        num_classes = y_pred.size(1)
+        bs = y_true_org.size(0)
+        num_classes = y_pred_org.size(1)
         dims = (0, 2)
 
         ## Mask factor normalization
+        intermediate_scores = []
+        scores = 0
 
-        for fac in self.square_weights:
-                H,W = torch.where(square_mask == fac)
-                y_pred[...,H,W] *= fac
+        import numpy as np
+        np.save("/mnt/prj001/Bibhabasu_Mohapatra/github/experiments/dump.npy",self.square_mask.numpy(),)
+        for idx in range(len(self.square_weights)):
+            H,W = torch.where(self.square_mask == idx)
+
+            y_pred = y_pred_org[...,H,W]*self.square_weights[idx]
+            y_true = y_true_org[...,H,W]
+
+            if self.mode == BINARY_MODE:
                 
-        if self.mode == BINARY_MODE:
-            
-            y_true = y_true.view(bs, 1, -1)
-            y_pred = y_pred.view(bs, 1, -1)
+                y_true = y_true.view(bs, 1, -1)
+                y_pred = y_pred.view(bs, 1, -1)
 
-            if self.ignore_index is not None:
-                mask = y_true != self.ignore_index
-                y_pred = y_pred * mask
-                y_true = y_true * mask
+                if self.ignore_index is not None:
+                    mask = y_true != self.ignore_index
+                    y_pred = y_pred * mask
+                    y_true = y_true * mask
 
-        if self.mode == MULTICLASS_MODE:
-            y_true = y_true.view(bs, -1)
-            y_pred = y_pred.view(bs, num_classes, -1)
+            if self.mode == MULTICLASS_MODE:
+                y_true = y_true.view(bs, -1)
+                y_pred = y_pred.view(bs, num_classes, -1)
 
-            if self.ignore_index is not None:
-                mask = y_true != self.ignore_index
-                y_pred = y_pred * mask.unsqueeze(1)
+                if self.ignore_index is not None:
+                    mask = y_true != self.ignore_index
+                    y_pred = y_pred * mask.unsqueeze(1)
 
-                y_true = F.one_hot((y_true * mask).to(torch.long), num_classes)  # N,H*W -> N,H*W, C
-                y_true = y_true.permute(0, 2, 1) * mask.unsqueeze(1)  # N, C, H*W
-            else:
-                y_true = F.one_hot(y_true, num_classes)  # N,H*W -> N,H*W, C
-                y_true = y_true.permute(0, 2, 1)  # N, C, H*W
+                    y_true = F.one_hot((y_true * mask).to(torch.long), num_classes)  # N,H*W -> N,H*W, C
+                    y_true = y_true.permute(0, 2, 1) * mask.unsqueeze(1)  # N, C, H*W
+                else:
+                    y_true = F.one_hot(y_true, num_classes)  # N,H*W -> N,H*W, C
+                    y_true = y_true.permute(0, 2, 1)  # N, C, H*W
 
-        if self.mode == MULTILABEL_MODE:
-            y_true = y_true.view(bs, num_classes, -1)
-            y_pred = y_pred.view(bs, num_classes, -1)
+            if self.mode == MULTILABEL_MODE:
+                y_true = y_true.view(bs, num_classes, -1)
+                y_pred = y_pred.view(bs, num_classes, -1)
 
-            if self.ignore_index is not None:
-                mask = y_true != self.ignore_index
-                y_pred = y_pred * mask
-                y_true = y_true * mask
+                if self.ignore_index is not None:
+                    mask = y_true != self.ignore_index
+                    y_pred = y_pred * mask
+                    y_true = y_true * mask
 
 
-        scores = self.compute_score(y_pred, y_true.type_as(y_pred), smooth=self.smooth, eps=self.eps, dims=dims)
+            scores += self.compute_score(y_pred, y_true.type_as(y_pred), smooth=self.smooth, eps=self.eps, dims=dims)
+            intermediate_scores.append(scores)
 
         if self.log_loss:
             loss = -torch.log(scores.clamp_min(self.eps))
@@ -157,7 +167,7 @@ class ConcetricDiceLoss(_Loss):
         if self.classes is not None:
             loss = loss[self.classes]
 
-
+        self.intermediate_score = intermediate_scores
         return self.aggregate_loss(loss)
 
     def aggregate_loss(self, loss):
@@ -165,3 +175,4 @@ class ConcetricDiceLoss(_Loss):
 
     def compute_score(self, output, target, smooth=0.0, eps=1e-7, dims=None) -> torch.Tensor:
         return soft_dice_score(output, target, smooth, eps, dims)
+    
