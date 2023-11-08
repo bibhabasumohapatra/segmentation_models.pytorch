@@ -104,7 +104,7 @@ class ConcetricDiceLoss(_Loss):
                 y_pred = y_pred * mask
                 y_true = y_true * mask
 
-            if self.ignore_index is not None:
+            if self.square_mask is not None:
                 y_true = y_true.view(bs, 1, -1)
                 y_pred = y_pred.view(bs, 1, -1)*square_mask.view(1,1,-1)
 
@@ -138,6 +138,9 @@ class ConcetricDiceLoss(_Loss):
                 y_true = y_true * mask
 
         scores = self.compute_score(y_pred, y_true.type_as(y_pred), smooth=self.smooth, eps=self.eps, dims=dims)
+
+        if self.square_mask is not None:
+            scores/= torch.sum(torch.tensor(self.square_weights))
 
         if self.log_loss:
             loss = -torch.log(scores.clamp_min(self.eps))
