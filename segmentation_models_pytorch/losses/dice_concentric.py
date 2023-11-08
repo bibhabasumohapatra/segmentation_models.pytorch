@@ -58,29 +58,21 @@ class ConcetricDiceLoss(_Loss):
         self.square_weights = square_weights
         self.square_mask = self.create_mask(input_shape)
 
-    def create_mask(self, shape, multiplier=2):
+    def create_mask(self, shape):
 
         num_inst = len(self.square_weights)
-
-        # square_indexes = range(num_inst)
         H, W = shape[0], shape[1]
         mask = torch.zeros((H, W))
-        mask[0:H,0:W] = self.square_weights[0]
-        x_0,y_0,x_1,y_1 = 0,0,W,H
 
-        values = 12
-        for event in range(num_inst-1):
-            y_0 += H//(2*multiplier)
-            x_0 += W//(2*multiplier)
-
-            y_1 -= H//(2*multiplier)
-            x_1 -= H//(2*multiplier)
-
-            mask[y_0:y_1,x_0:x_1] = self.square_weights[event+1]
-
-            H, W = int(y_1-y_0), int(x_1 - x_0)
-            values += 2
-
+        d = int(H/(2*num_inst))
+        
+        for event in range(num_inst):
+            y_0 = d*event
+            x_0 = d*event
+            y_1 = H - d*event
+            x_1 = W - d*event
+            
+            mask[y_0:y_1,x_0:x_1] = self.square_weights[event]
         return mask
     
     def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
